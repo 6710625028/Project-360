@@ -12,15 +12,18 @@ current_frame = None
 frame_lock = threading.Lock()
 
 def get_video_source():
-    """ตรวจจับกล้องจริงก่อน หากไม่มีให้ใช้ไฟล์วิดีโอจำลอง"""
-    cap = cv2.VideoCapture(0)  # ตรวจจับพอร์ตกล้องแรก
-    if cap.isOpened():
-        ret, frame = cap.read()
-        if ret and frame is not None:
-            print("[INFO] ตรวจพบกล้อง 360 จริง! เริ่มดึงภาพสด...")
-            return cap
-        cap.release()
-    
+    """ตรวจจับกล้องภายนอก (Index 1 หรือ 2) ก่อนกล้องในตัวโน้ตบุ๊ก"""
+    # ลองเปิดกล้องภายนอกที่เพิ่งเสียบ USB เข้ามา (Index 1 และ 2)
+    for cam_idx in [1, 2]:
+        cap = cv2.VideoCapture(cam_idx)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                print(f"[INFO] ตรวจพบกล้องภายนอกที่ Index {cam_idx}! เริ่มดึงภาพสด...")
+                return cap
+            cap.release()
+
+    # ถ้าไม่พบกล้องภายนอก ให้สลับไปใช้วิดีโอจำลอง (ไม่ใช้กล้องโน้ตบุ๊ก Index 0)
     print("[INFO] ไม่พบกล้อง 360 สลับไปใช้ไฟล์วิดีโอจำลอง:", VIDEO_PATH)
     return cv2.VideoCapture(VIDEO_PATH)
 

@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pico 4 · 360 / 180 Live VR</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <style>
+    :root {
+      --bg: #07090e;
+      --panel-bg: rgba(18, 22, 31, 0.75);
+      --panel-border: rgba(255, 255, 255, 0.08);
+      --accent: #00f2fe;
+      --live: #00ff88;
+      --text: #f1f5f9;
+      --text-dim: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body { background-color: var(--bg); color: var(--text); font-family: 'Plus Jakarta Sans', sans-serif; overflow: hidden; width: 100vw; height: 100vh; }
+    #stream { display: none; }
+    #webgl-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+    .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 24px; }
+    .interactive { pointer-events: auto; }
+    .glass-card { background: var(--panel-bg); backdrop-filter: blur(16px); border: 1px solid var(--panel-border); border-radius: 16px; }
+    .top-bar { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-badge { background: linear-gradient(135deg, #00c6ff, #0072ff); color: #fff; font-weight: 700; font-size: 11px; padding: 4px 8px; border-radius: 6px; }
+    .brand-title { font-weight: 600; font-size: 15px; }
+    .stats-group { display: flex; align-items: center; gap: 16px; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+    .live-indicator { display: flex; align-items: center; gap: 6px; color: var(--live); font-weight: 600; }
+    .dot { width: 8px; height: 8px; background: var(--live); border-radius: 50%; box-shadow: 0 0 10px var(--live); }
+    .hint-box { align-self: center; font-size: 13px; color: var(--text-dim); background: rgba(0,0,0,0.5); padding: 8px 18px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.08); text-align: center; }
+    .hint-box b { color: var(--accent); }
+    .bottom-bar { display: flex; justify-content: space-between; align-items: flex-end; }
+    .btn { background: var(--panel-bg); backdrop-filter: blur(10px); border: 1px solid var(--panel-border); color: var(--text); padding: 10px 16px; border-radius: 12px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s ease; }
+    .btn:hover { background: rgba(255, 255, 255, 0.1); }
+    .btn-vr { background: linear-gradient(135deg, #00f2fe, #4facfe); color: #041019; border: none; padding: 12px 24px; font-size: 14px; font-weight: 700; box-shadow: 0 0 25px rgba(0, 242, 254, 0.35); }
+    .btn-vr:disabled { background: #1e2638; color: #5d6b82; box-shadow: none; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+
+  <!-- แหล่งที่มาของสตรีมภาพ MJPEG จากกล้อง (ซ่อนไว้เพื่อนำไปวาดลง Canvas แทน) -->
+  <img id="stream" src="/video_feed" crossorigin="anonymous">
+
+  <!-- เลเยอร์ UI สำหรับหน้าจอปกติ (ซ่อนอัตโนมัติเมื่อเข้าโหมดแว่น VR) -->
+  <div class="ui-layer" id="uiLayer">
+    <div class="top-bar glass-card interactive">
+      <div class="brand">
+        <span class="brand-badge">PICO 4</span>
+        <span class="brand-title">Immersive Dome Broadcast</span>
+      </div>
+      <div class="stats-group">
+        <div class="live-indicator"><span class="dot"></span> LIVE</div>
+        <div>MODE: <span id="modeDisplay" style="color:var(--accent); font-weight:bold;">360° FULL</span></div>
+        <div>FPS: <span id="fpsVal">--</span></div>
+      </div>
+    </div>
+
+    <div class="hint-box">
+      ในโหมด VR: กด <b>Trigger (ไกปืน)</b> สลับ 360° / 180° | กด <b>Grip (ปุ่มบีบ)</b> เพื่อออกจาก VR
+    </div>
+
+    <div class="bottom-bar">
+      <div class="interactive" style="display:flex; gap:10px;">
+        <button class="btn" id="toggleModeBtn">🔄 สลับโหมด (360° / 180°)</button>
+        <button class="btn" id="recenterBtn">↺ รีเซ็ตมุมมอง</button>
+      </div>
+      <div class="interactive">
+        <button class="btn btn-vr" id="vrBtn">
+          <span id="vrBtnText">ตรวจสอบ WebXR...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <canvas id="webgl-canvas"></canvas>
+
+  <script>
+    const img = document.getElementById('stream');
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const uiLayer = document.getElementById('uiLayer');
+    const vrBtn = document.getElementById('vrBtn');
+    const vrBtnText = document.getElementById('vrBtnText');
+    const modeDisplay = document.getElementById('modeDisplay');
+    const fpsVal = document.getElementById('fpsVal');
+
+    // 1. Scene & Camera Setup (ผู้ใช้อยู่ที่จุดศูนย์กลาง 0, 0, 0 เสมอ)
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 0, 0.001);
+
+    const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('webgl-canvas'), antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableZoom = false;
+    controls.enablePan = false;
+    controls.rotateSpeed = -0.3;
+
+    // 2. Geometries สำหรับโหมด 360° และ 180°
+    const geo360 = new THREE.SphereGeometry(500, 64, 32);
+    geo360.scale(-1, 1, 1);
+
+    const geo180 = new THREE.SphereGeometry(500, 64, 32, Math.PI / 2, Math.PI);
+    geo180.scale(-1, 1, 1);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+
+    const screenMesh = new THREE.Mesh(geo360, material);
+    screenMesh.position.set(0, 0, 0);
+    scene.add(screenMesh);
+
+    // 3. VR Toast HUD (ป้ายแจ้งเตือนลอยระดับสายตาในแว่น)
+    const hudCanvas = document.createElement('canvas');
+    hudCanvas.width = 512; hudCanvas.height = 128;
+    const hudCtx = hudCanvas.getContext('2d');
+    const hudTexture = new THREE.CanvasTexture(hudCanvas);
+    const hudMaterial = new THREE.SpriteMaterial({ map: hudTexture, transparent: true, opacity: 0 });
+    const hudSprite = new THREE.Sprite(hudMaterial);
+    hudSprite.scale.set(1.4, 0.35, 1);
+    scene.add(hudSprite);
+
+    let hudTimer = null;
+
+    // ฟังก์ชัน: แสดงป้ายแจ้งเตือน HUD ลอยระดับสายตาในโลกเสมือนจริง (VR)
+    function showVRToast(text) {
+      // ล้างพิกเซลภาพเดิมทั้งหมดบน Canvas ป้องกันการวาดทับซ้อน
+      hudCtx.clearRect(0, 0, 512, 128);
+      // กำหนดสีพื้นหลังกล่องข้อจำเป็นสีน้ำเงินเข้มโปร่งแสง (Opacity 85%)
+      hudCtx.fillStyle = "rgba(10, 14, 23, 0.85)";
+      // กำหนดรูปทรงกล่องสี่เหลี่ยมขอบมน รัศมีมุม 20 พิกเซล
+      hudCtx.roundRect(10, 10, 492, 108, 20);
+      // เทสีพื้นหลังลงในกรอบสี่เหลี่ยมขอบมน
+      hudCtx.fill();
+      // กำหนดสีเส้นขอบเป็นสีฟ้า Cyan สว่าง
+      hudCtx.strokeStyle = "#00f2fe";
+      // กำหนดความกว้างของเส้นขอบเป็น 4 พิกเซล
+      hudCtx.lineWidth = 4;
+      // วาดเส้นขอบตามแนวสี่เหลี่ยมขอบมน
+      hudCtx.stroke();
+      // ตั้งค่ารูปแบบตัวอักษรเป็นฟอนต์ Monospace หนา ขนาด 30 พิกเซล
+      hudCtx.font = "bold 30px monospace";
+      // กำหนดสีข้อความเป็นสีขาว
+      hudCtx.fillStyle = "#ffffff";
+      // จัดตำแหน่งข้อความแนวนอนให้อยู่กึ่งกลาง
+      hudCtx.textAlign = "center";
+      // จัดแนวแกนดิ่งของข้อความให้อยู่กึ่งกลางบรรทัด
+      hudCtx.textBaseline = "middle";
+      // วาดข้อความที่ส่งเข้ามาลงบนกึ่งกลางกล่อง (พิกัด X=256, Y=64)
+      hudCtx.fillText(text, 256, 64);
+      // แจ้ง Three.js ให้อัปเดต Texture ของ HUD เนื่องจาก Canvas มีการเปลี่ยนแปลง
+      hudTexture.needsUpdate = true;
+      // ปรับค่าความทึบแสงของ Sprite ให้แสดงเต็มที่ (100%) เพื่อให้ผู้ใช้มองเห็นป้าย
+      hudMaterial.opacity = 1.0;
+      // ยกเลิกเวลานับถอยหลังเดิม (ถ้ามี) เพื่อไม่ให้ป้ายถูกซ่อนก่อนเวลา
+      clearTimeout(hudTimer);
+      // ตั้งเวลาหน่วง 1,800 มิลลิวินาที (1.8 วินาที) แล้วค่อยสั่งซ่อนป้าย
+      hudTimer = setTimeout(() => { 
+        // ปรับความทึบแสงกลับเป็น 0 เพื่อซ่อนป้าย HUD
+        hudMaterial.opacity = 0; 
+      }, 1800);
+    }
+
+    // 4. สลับโหมด 360° <-> 180°
+    let currentMode = '360';
+
+    // ฟังก์ชัน: สลับโหมดการแสดงผลระหว่าง 360 องศาเต็มทรงกลม กับ 180 องศาเฉพาะครึ่งหน้า
+    function toggleMode(hapticEvent = null) {
+      // ตรวจสอบว่าโหมดปัจจุบันเป็น 360 องศาหรือไม่
+      if (currentMode === '360') {
+        // เปลี่ยนค่าตัวแปรสถานะโหมดเป็น 180
+        currentMode = '180';
+        // สลับรูปทรงเรขาคณิต (Geometry) ของหน้าจอให้เป็นโดมครึ่งวงกลม 180 องศา
+        screenMesh.geometry = geo180;
+        // อัปเดตข้อความบอกโหมดบน UI หน้าจอปกติเป็น 180° FRONT
+        modeDisplay.textContent = '180° FRONT';
+        // แสดงป้ายแจ้งเตือนในแว่น VR ว่าเข้าสู่โหมด 180° FRONT
+        showVRToast('MODE: 180° FRONT');
+      } else {
+        // หากไม่ใช่ 360 ให้เปลี่ยนสถานะกลับมาเป็น 360
+        currentMode = '360';
+        // สลับรูปทรงเรขาคณิตกลับเป็นทรงกลมเต็มลูก 360 องศา
+        screenMesh.geometry = geo360;
+        // อัปเดตข้อความบอกโหมดบน UI หน้าจอปกติเป็น 360° FULL
+        modeDisplay.textContent = '360° FULL';
+        // แสดงป้ายแจ้งเตือนในแว่น VR ว่าเข้าสู่โหมด 360° FULL
+        showVRToast('MODE: 360° FULL');
+      }
+
+      // ตรวจสอบว่ามี Event ส่งเข้ามา และตรวจพบออบเจ็กต์ Gamepad ของคอนโทรลเลอร์หรือไม่
+      if (hapticEvent && hapticEvent.target && hapticEvent.target.gamepad) {
+        // อ้างอิงออบเจ็กต์ Gamepad จากตัวคอนโทรลเลอร์ที่ถูกกด
+        const gamepad = hapticEvent.target.gamepad;
+        // ตรวจสอบว่าคอนโทรลเลอร์รองรับระบบมอเตอร์สั่นแบบ Haptic หรือไม่
+        if (gamepad.hapticActuators && gamepad.hapticActuators[0]) {
+          // สั่งให้มอเตอร์สั่นที่ระดับความแรง 60% (0.6) เป็นระยะเวลา 80 มิลลิวินาที เพื่อตอบสนองการกด
+          gamepad.hapticActuators[0].pulse(0.6, 80);
+        }
+      }
+    }
+
+    // ฟังก์ชัน Event: คลิกปุ่มสลับโหมดบนหน้าจอ 2D
+    document.getElementById('toggleModeBtn').addEventListener('click', () => {
+      // เรียกใช้ฟังก์ชันสลับโหมด 360° / 180°
+      toggleMode();
+    });
+
+    // 5. Pico 4 Controller Triggers & Grips
+    for (let i = 0; i < 2; i++) {
+      // ดึงตัวควบคุมของ Three.js XR ตามหมายเลขคอนโทรลเลอร์ (0 = ซ้าย, 1 = ขวา)
+      const controller = renderer.xr.getController(i);
+
+      // ดักเหตุการณ์เมื่อผู้ใช้กดไกปืน (Trigger) ของคอนโทรลเลอร์
+      controller.addEventListener('selectstart', (e) => {
+        // สลับโหมด 360/180 พร้อมส่ง Event ไปประมวลผลระบบสั่นตอบสนอง (Haptic)
+        toggleMode(e);
+      });
+
+      // ดักเหตุการณ์เมื่อผู้ใช้บีบกริป (Grip) ที่ด้ามจับของคอนโทรลเลอร์
+      controller.addEventListener('squeezestart', () => { 
+        // ตรวจสอบว่ามีเซสชัน VR ทำงานอยู่หรือไม่ แล้วสั่งยุติเซสชันเพื่อออกจากแว่น
+        if (currentSession) currentSession.end(); 
+      });
+
+      // เพิ่มคอนโทรลเลอร์เข้าไปใน Scene ของโลก 3 มิติ
+      scene.add(controller);
+    }
+
+    // 6. WebXR Management
+    let currentSession = null;
+
+    // ฟังก์ชัน: ตรวจสอบความพร้อมของอุปกรณ์และเบราว์เซอร์ในการเข้าสู่โหมด VR
+    async function checkWebXR() {
+      // ตรวจสอบว่าเบราว์เซอร์รองรับ API มาตรฐาน WebXR หรือไม่
+      if ('xr' in navigator && navigator.xr.isSessionSupported) {
+        // ส่งคำร้องสอบถามระบบว่ารองรับโหมดแว่น VR (immersive-vr) หรือไม่
+        const supported = await navigator.xr.isSessionSupported('immersive-vr');
+        // หากระบบรองรับการเชื่อมต่อกับแว่นตา VR
+        if (supported) {
+          // ปรับข้อความบนปุ่มเป็น "ENTER VR"
+          vrBtnText.textContent = 'ENTER VR';
+          // ปลดล็อกให้ผู้ใช้สามารถคลิกปุ่มได้
+          vrBtn.disabled = false;
+          // ออกจากฟังก์ชันการทำงาน
+          return;
+        }
+      }
+      // หากไม่รองรับ VR ให้ปรับข้อความแจ้งเตือนว่าใช้งานในโหมดปกติ
+      vrBtnText.textContent = 'โหมดปกติ (ไม่มีแว่น VR)';
+      // ล็อกปุ่มไม่ให้ผู้ใช้กดใช้งาน
+      vrBtn.disabled = true;
+    }
+    // สั่งรันฟังก์ชันตรวจสอบ WebXR ทันทีเมื่อโหลดสคริปต์
+    checkWebXR();
+
+    // ฟังก์ชัน Event: จัดการการเข้าและออกจากโหมด VR เมื่อคลิกปุ่ม VR
+    vrBtn.addEventListener('click', async () => {
+      // ตรวจสอบว่ายังไม่ได้อยู่ในโหมด VR ใช่หรือไม่
+      if (!currentSession) {
+        // ร้องขอเซสชัน WebXR แบบ 'immersive-vr' พร้อมระบุขอใช้งานระบบติดตามระดับพื้นห้อง
+        const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
+        // ส่งเซสชันที่ได้เข้าไปยังตัวเรนเดอร์ WebGL ของ Three.js
+        renderer.xr.setSession(session);
+        // บันทึกอ้างอิงเซสชันลงในตัวแปรกลางเพื่อใช้ควบคุมต่อ
+        currentSession = session;
+        // ปรับข้อความบนปุ่มให้เป็น "EXIT VR"
+        vrBtnText.textContent = 'EXIT VR';
+        // ซ่อนแผง UI บนหน้าจอ 2D โดยปรับความโปร่งแสงเป็น 0
+        uiLayer.style.opacity = '0';
+        // แสดงข้อความต้อนรับและคำแนะนำการกดปุ่มขึ้นในแว่น VR
+        showVRToast('PULL TRIGGER TO SWITCH 180/360');
+
+        // ดักเหตุการณ์เมื่อเซสชัน VR สิ้นสุดลง (เช่น ผู้ใช้กดออกจากแว่น)
+        session.addEventListener('end', () => {
+          // ล้างตัวแปรเซสชันกลับเป็น null
+          currentSession = null;
+          // ปรับข้อความปุ่มกลับมาเป็น "ENTER VR" อีกครั้ง
+          vrBtnText.textContent = 'ENTER VR';
+          // แสดงแผง UI บนหน้าจอ 2D กลับคืนมา
+          uiLayer.style.opacity = '1';
+        });
+      } else {
+        // หากอยู่ในโหมด VR อยู่แล้ว ให้สั่งยุติเซสชันเพื่อออกจาก VR
+        currentSession.end();
+      }
+    });
+
+    // ฟังก์ชัน Event: จัดการการคลิกปุ่มรีเซ็ตมุมมองกล้อง
+    document.getElementById('recenterBtn').addEventListener('click', () => {
+      // รีเซ็ตการหมุนของ OrbitControls กลับไปสู่จุดเริ่มต้นกึ่งกลาง
+      controls.reset();
+    });
+
+    // 7. Render Loop
+    let lastTime = performance.now();
+    let frameCount = 0;
+    const viewDir = new THREE.Vector3();
+
+    // ลูปหลักสำหรับการวาดภาพและเรนเดอร์ฉาก 3 มิติแบบเรียลไทม์ (รองรับ WebXR Frame)
+    renderer.setAnimationLoop(() => {
+      // ตรวจสอบว่ารูปภาพหรือสตรีมวิดีโอมีข้อมูลพิกเซลเข้ามาแล้ว (ความกว้าง > 0)
+      if (img.naturalWidth > 0) {
+        // ตรวจสอบว่าขนาดแคนวาสตรงกับขนาดจริงของเฟรมภาพสตรีมหรือไม่
+        if (canvas.width !== img.naturalWidth) {
+          // ปรับความกว้าง Canvas ให้ตรงกับภาพต้นฉบับ
+          canvas.width = img.naturalWidth;
+          // ปรับความสูง Canvas ให้ตรงกับภาพต้นฉบับ
+          canvas.height = img.naturalHeight;
+        }
+        // วาดภาพเฟรมล่าสุดจากสตรีมลงบนแคนวาส 2D
+        ctx.drawImage(img, 0, 0);
+        // แจ้งให้อัปเดต Texture 3 มิติ เพื่อนำภาพเฟรมใหม่ไปฉายบนทรงกลม
+        texture.needsUpdate = true;
+      }
+
+      // ตรวจสอบว่าป้ายแจ้งเตือน HUD กำลังแสดงผลอยู่หรือไม่ (ความทึบแสง > 0)
+      if (hudMaterial.opacity > 0) {
+        // คำนวณหาเวกเตอร์ทิศทางที่สายตาหรือกล้องกำลังหันไป
+        camera.getWorldDirection(viewDir);
+        // เลื่อนตำแหน่งป้าย HUD ให้ไปอยู่ด้านหน้ากล้องสายตา โดยขยับไปตามทิศทางมอง 1.8 หน่วย
+        hudSprite.position.copy(camera.position).addScaledVector(viewDir, 1.8);
+        // ปรับมุมหมุนของป้าย HUD ให้หันหน้าตรงเข้าหากล้องตลอดเวลา
+        hudSprite.quaternion.copy(camera.quaternion);
+      }
+
+      // เพิ่มจำนวนรอบการนับเฟรมขึ้น 1 เฟรม
+      frameCount++;
+      // ดึงเวลาปัจจุบันในระดับมิลลิวินาที
+      const now = performance.now();
+      // ตรวจสอบว่าเวลาผ่านไปครบ 1 วินาที (1,000 ms) หรือยัง
+      if (now - lastTime >= 1000) {
+        // แสดงผลอัตราเฟรมเรต (FPS) ล่าสุดขึ้นบนหน้าจอ UI
+        fpsVal.textContent = frameCount;
+        // รีเซ็ตตัวนับเฟรมเริ่มต้นนับใหม่
+        frameCount = 0;
+        // บันทึกเวลาจุดเริ่มต้นรอบใหม่
+        lastTime = now;
+      }
+      // อัปเดตการควบคุมมุมกล้องของ OrbitControls
+      controls.update();
+      // เรนเดอร์ฉาก 3D และกล้องออกไปยังหน้าจอหรือเลนส์แว่น VR
+      renderer.render(scene, camera);
+    });
+
+    // ฟังก์ชัน Event: จัดการการปรับขนาดหน้าต่างเบราว์เซอร์ของผู้ใช้
+    window.addEventListener('resize', () => {
+      // คำนวณอัตราส่วนภาพของกล้องใหม่ให้สัมพันธ์กับความกว้าง/ความสูงใหม่ของหน้าต่าง
+      camera.aspect = window.innerWidth / window.innerHeight;
+      // สั่งคำนวณ Projection Matrix ของกล้องใหม่เพื่อป้องกันภาพบิดเบี้ยว
+      camera.updateProjectionMatrix();
+      // ปรับขนาดหน้าจอเรนเดอร์ของ Three.js ให้ครอบคลุมขนาดหน้าต่างใหม่
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

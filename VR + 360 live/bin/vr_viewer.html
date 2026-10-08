@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>360 Live VR Viewer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/aframe/1.5.0/aframe.min.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #status {
+      position: fixed; top: 10px; left: 10px; z-index: 999;
+      color: #0f0; font-family: monospace; font-size: 14px;
+      background: rgba(0,0,0,0.6); padding: 6px 10px; border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">mode: 360 | angle: 0</div>
+
+  <a-scene>
+    <a-assets>
+      <img id="frameImg" src="" crossorigin="anonymous">
+    </a-assets>
+
+    <!-- 360/180 sphere ที่แสดงภาพ live -->
+    <a-sky id="stream" src="#frameImg" rotation="0 -90 0"></a-sky>
+
+    <a-camera position="0 1.6 0">
+      <a-cursor></a-cursor>
+    </a-camera>
+
+    <!-- Controller ทั้งสองข้าง: PICO 4 map ผ่าน Oculus Touch profile ตามที่ตั้งใน OpenXR -->
+    <a-entity id="rightHand" oculus-touch-controls="hand: right"></a-entity>
+    <a-entity id="leftHand" oculus-touch-controls="hand: left"></a-entity>
+  </a-scene>
+
+  <script>
+    // ====== ตั้งค่า server ตรงนี้ ======
+    const SERVER_IP = "10.245.58.89"; // แก้เป็น IP ของเครื่องรัน server (ดูจาก log ที่ mock_server3.py print ตอนรัน)
+    const SERVER_PORT = 5000;
+    // ===================================
+
+    const modes = [
+      { mode: "360", angle: 0 },
+      { mode: "180", angle: 0 },
+      { mode: "180", angle: 90 },
+      { mode: "180", angle: 180 },
+      { mode: "180", angle: 270 },
+    ];
+    let modeIndex = 0;
+
+    const statusEl = document.getElementById("status");
+    const imgEl = document.getElementById("frameImg");
+
+    function updateStatus() {
+      const m = modes[modeIndex];
+      statusEl.textContent = `mode: ${m.mode} | angle: ${m.angle}`;
+    }
+
+    function toggleNextMode() {
+      modeIndex = (modeIndex + 1) % modes.length;
+      updateStatus();
+      console.log("[VR] switched to", modes[modeIndex]);
+    }
+
+    // ====== ดึงภาพจาก server ต่อเนื่อง (เทียบเท่า FetchLoop ใน Unity) ======
+    function fetchFrame() {
+      const m = modes[modeIndex];
+      const url = `http://${SERVER_IP}:${SERVER_PORT}/frame?mode=${m.mode}&angle=${m.angle}&t=${Date.now()}`;
+      imgEl.setAttribute("src", url);
+    }
+    setInterval(fetchFrame, 33); // ~30 FPS เท่า Unity เดิม
+
+    // ====== รอ scene โหลดเสร็จก่อนผูก event ปุ่ม ======
+    document.querySelector("a-scene").addEventListener("loaded", () => {
+      const rightHand = document.querySelector("#rightHand");
+      const leftHand = document.querySelector("#leftHand");
+
+      // Trigger บนคอนโทรลเลอร์ขวา
+      rightHand.addEventListener("triggerdown", toggleNextMode);
+      // Trigger บนคอนโทรลเลอร์ซ้าย เผื่อถนัดซ้าย
+      leftHand.addEventListener("triggerdown", toggleNextMode);
+
+      // ปุ่ม A/X (primary button) ก็ให้ทำงานเหมือนกัน (คล้าย Unity เดิม)
+      rightHand.addEventListener("abuttondown", toggleNextMode);
+      leftHand.addEventListener("xbuttondown", toggleNextMode);
+
+      // Grip
+      rightHand.addEventListener("gripdown", toggleNextMode);
+    });
+
+    // รองรับ spacebar บนคอมพิวเตอร์เพื่อเทสต์นอกแว่น
+    document.addEventListener("keydown", (e) => {
+      if (e.code === "Space") toggleNextMode();
+    });
+
+    updateStatus();
+  </script>
+</body>
+</html>

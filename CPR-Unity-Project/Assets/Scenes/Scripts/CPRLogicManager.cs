@@ -255,11 +255,12 @@ public class CPRLogicManager : MonoBehaviour
 
     void Start()
     {
-        if (useMockData)
-        {
-            currentState = ScenarioState.Compressions;
-            ResetCompressionStats();
-        }
+        // NOTE: Mock data only ever samples while currentState == Compressions
+        // (see LateUpdate below), so we no longer force the state here.
+        // This lets an external controller (e.g. CPRScenarioController) own
+        // the FindScene -> CheckBreathing -> Call1669 -> Compressions -> Summary
+        // progression. Stats still reset whenever Compressions state begins
+        // (see AdvanceState()).
     }
 
     void LateUpdate()

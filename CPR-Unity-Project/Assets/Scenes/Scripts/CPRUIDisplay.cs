@@ -41,11 +41,23 @@ public class CPRUIDisplay : MonoBehaviour
         // fired yet (e.g. right when Play starts before first compression).
         if (cprManager == null) return;
 
+        // Only show Score/BPM while actively in the Compressions step -
+        // otherwise they overlap with InstructionText or the Summary screen.
+        bool showDuringThisStep = cprManager.currentState == CPRLogicManager.ScenarioState.Compressions;
+
         if (scoreText != null)
-            scoreText.text = $"Score: {cprManager.score:F1}";
+        {
+            scoreText.gameObject.SetActive(showDuringThisStep);
+            if (showDuringThisStep)
+                scoreText.text = $"Score: {cprManager.score:F1}";
+        }
 
         if (bpmText != null)
-            bpmText.text = $"BPM: {cprManager.CurrentBpm:F0}";
+        {
+            bpmText.gameObject.SetActive(showDuringThisStep);
+            if (showDuringThisStep)
+                bpmText.text = $"BPM: {cprManager.CurrentBpm:F0}";
+        }
     }
 
     private void HandleScoreUpdated(float newScore)

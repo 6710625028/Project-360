@@ -2,31 +2,25 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 
-/// <summary>
-/// Drives the 5-step CPR scenario flow end-to-end:
-/// FindScene -> CheckBreathing -> Call1669 -> Compressions -> Summary
-/// Shows instruction text per step, a "Next" button to advance,
-/// and a final summary screen with the score breakdown.
-/// Works together with CPRLogicManager (reads its state/events)
-/// and CPRUIDisplay (which keeps showing live Score/BPM during Compressions).
-/// </summary>
 public class CPRScenarioController : MonoBehaviour
 {
-    [Header("References")]
+    [Header("Core References")]
     public CPRLogicManager cprManager;
 
     [Header("Instruction UI")]
-    [Tooltip("Text showing the current step's instruction.")]
     public TextMeshProUGUI instructionText;
-    [Tooltip("Button the user presses to move to the next step.")]
     public Button nextButton;
-    [Tooltip("Text on the Next button (changes on the last step before scoring).")]
     public TextMeshProUGUI nextButtonLabel;
 
     [Header("Summary UI")]
-    [Tooltip("Panel shown only during the Summary step.")]
     public GameObject summaryPanel;
     public TextMeshProUGUI summaryText;
+
+    [Header("Assessment Info Modal (i)")]
+    public Button infoButton;             // ปุ่มตัว (i)
+    public GameObject infoModalPanel;     // หน้าต่าง Popup อธิบาย
+    public Button closeInfoButton;        // ปุ่มปิด Popup
+    public TextMeshProUGUI infoText;      // กล่องข้อความอธิบายสูตร
 
     void Start()
     {
@@ -42,8 +36,18 @@ public class CPRScenarioController : MonoBehaviour
         if (nextButton != null)
             nextButton.onClick.AddListener(OnNextPressed);
 
+        // ตั้งค่าปุ่ม Info (i) และปุ่มปิด
+        if (infoButton != null)
+            infoButton.onClick.AddListener(OpenInfoModal);
+
+        if (closeInfoButton != null)
+            closeInfoButton.onClick.AddListener(CloseInfoModal);
+
         if (summaryPanel != null)
             summaryPanel.SetActive(false);
+
+        if (infoModalPanel != null)
+            infoModalPanel.SetActive(false);
 
         RefreshUI(cprManager.currentState);
     }
@@ -55,13 +59,18 @@ public class CPRScenarioController : MonoBehaviour
 
         if (nextButton != null)
             nextButton.onClick.RemoveListener(OnNextPressed);
+
+        if (infoButton != null)
+            infoButton.onClick.RemoveListener(OpenInfoModal);
+
+        if (closeInfoButton != null)
+            closeInfoButton.onClick.RemoveListener(CloseInfoModal);
     }
 
     private void OnNextPressed()
     {
         if (cprManager.currentState == CPRLogicManager.ScenarioState.Summary)
         {
-            // Restart the whole scenario from the beginning.
             cprManager.ResetCompressionStats();
             cprManager.currentState = CPRLogicManager.ScenarioState.FindScene;
             RefreshUI(cprManager.currentState);
@@ -85,10 +94,14 @@ public class CPRScenarioController : MonoBehaviour
             instructionText.text = GetInstructionFor(state);
 
         if (nextButtonLabel != null)
-            nextButtonLabel.text = (state == CPRLogicManager.ScenarioState.Summary) ? "Done" : "Next";
+            nextButtonLabel.text = (state == CPRLogicManager.ScenarioState.Summary) ? "Restart" : "Next";
 
         if (state == CPRLogicManager.ScenarioState.Summary)
+        {
             ShowSummary();
+            if (infoModalPanel != null)
+                infoModalPanel.SetActive(false);
+        }
     }
 
     private string GetInstructionFor(CPRLogicManager.ScenarioState state)
@@ -102,9 +115,9 @@ public class CPRScenarioController : MonoBehaviour
             case CPRLogicManager.ScenarioState.Call1669:
                 return "Call 1669 for emergency help before starting compressions.";
             case CPRLogicManager.ScenarioState.Compressions:
-                return "Begin chest compressions. Aim for 100-120 BPM at the correct depth.";
+                return "Begin chest compressions. Aim for 100-120 BPM at 5-6 cm depth.";
             case CPRLogicManager.ScenarioState.Summary:
-                return "Scenario complete. Here is your performance summary.";
+                return "Scenario complete. High-Quality CPR Performance Summary:";
             default:
                 return "";
         }
@@ -115,11 +128,55 @@ public class CPRScenarioController : MonoBehaviour
         if (summaryText == null) return;
 
         var summary = cprManager.GetSummary();
+        int totalMinutes = Mathf.FloorToInt(summary.totalTimeSeconds / 60f);
+        int totalSeconds = Mathf.FloorToInt(summary.totalTimeSeconds % 60f);
+
         summaryText.text =
-            $"Total Compressions: {summary.totalCompressions}\n" +
-            $"Good Depth: {summary.goodDepthCompressions}\n" +
-            $"Good Rate: {summary.goodRateCompressions}\n" +
-            $"Pauses: {summary.pauseCount}\n" +
-            $"Final Score: {summary.finalScore:F1}";
+            $"=== CPR ASSESSMENT REPORT ===\n" +
+            $"Duration: {totalMinutes:00}:{totalSeconds:00} min\n" +
+            $"Total Compressions: {summary.totalCompressions}\n\n" +
+            $"Depth Accuracy: {summary.depthPercentage:F1}% ({summary.goodDepthCompressions}/{summary.totalCompressions})\n" +
+            $"Rate Accuracy: {summary.ratePercentage:F1}% ({summary.goodRateCompressions}/{summary.totalCompressions})\n" +
+            $"Full Recoil: {summary.recoilPercentage:F1}%\n" +
+            $"CCF (Fraction): {summary.ccfPercentage:F1}% (Target > 60%)\n" +
+            $"Pauses: {summary.pauseCount}\n\n" +
+            $"OVERALL SCORE: {summary.finalScore:F1} / 100";
+    }
+
+    // ==========================================
+    // Info Modal Logic
+    // ==========================================
+    public void OpenInfoModal()
+    {
+        if (infoModalPanel == null) return;
+
+        infoModalPanel.SetActive(true);
+
+        if (infoText != null)
+        {
+            infoText.text =
+                "<b>AHA CPR QUALITY CRITERIA GUIDE</b>\n\n" +
+                "<b>1. Depth Accuracy (Target: 5.0 - 6.0 cm):</b>\n" +
+                "Percentage of compressions meeting AHA adult depth guidelines.\n" +
+                "Formula: (Good Depth Compressions / Total) * 100%\n\n" +
+                "<b>2. Rate Accuracy (Target: 100 - 120 BPM):</b>\n" +
+                "Percentage of compressions delivered at the optimal speed.\n" +
+                "Formula: (Good Pace Compressions / Total) * 100%\n\n" +
+                "<b>3. Full Recoil:</b>\n" +
+                "Ensures the chest returns completely to baseline (depth <= 0.5 cm)\n" +
+                "allowing complete cardiac refilling between pumps.\n\n" +
+                "<b>4. CCF (Chest Compression Fraction):</b>\n" +
+                "Proportion of total session time hands are actively compressing.\n" +
+                "Formula: (Active Compressing Time / Total Time) * 100% (Target > 60%)\n\n" +
+                "<b>5. Pauses & Score:</b>\n" +
+                "Interruptions exceeding 2.0s cause blood pressure collapse.\n" +
+                "Each detected pause deducts 5.0 points from overall score.";
+        }
+    }
+
+    public void CloseInfoModal()
+    {
+        if (infoModalPanel != null)
+            infoModalPanel.SetActive(false);
     }
 }

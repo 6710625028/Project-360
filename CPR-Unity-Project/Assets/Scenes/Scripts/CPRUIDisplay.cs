@@ -1,23 +1,18 @@
 using UnityEngine;
 using TMPro;
 
-/// <summary>
-/// Listens to CPRLogicManager's events and updates the on-screen
-/// ScoreText / BpmText TextMeshPro labels in real time.
-/// Attach this to the same GameObject as CPRLogicManager (CPRManager),
-/// or any GameObject, then drag the references in the Inspector.
-/// </summary>
 public class CPRUIDisplay : MonoBehaviour
 {
     [Header("References")]
-    [Tooltip("Drag the CPRManager GameObject's CPRLogicManager component here.")]
     public CPRLogicManager cprManager;
 
-    [Tooltip("Drag the ScoreText TextMeshPro object here.")]
+    [Header("Real-Time Labels")]
     public TextMeshProUGUI scoreText;
-
-    [Tooltip("Drag the BpmText TextMeshPro object here.")]
     public TextMeshProUGUI bpmText;
+    [Tooltip("ลาก Text แสดงเวลานับถอยหลังมาใส่ที่นี่ (ถ้ามี)")]
+    public TextMeshProUGUI timerText;
+    [Tooltip("ลาก Text แสดงสัดส่วนเวลาการกด CCF มาใส่ที่นี่ (ถ้ามี)")]
+    public TextMeshProUGUI ccfText;
 
     void OnEnable()
     {
@@ -37,26 +32,42 @@ public class CPRUIDisplay : MonoBehaviour
 
     void Update()
     {
-        // Also refresh every frame as a fallback, in case events haven't
-        // fired yet (e.g. right when Play starts before first compression).
         if (cprManager == null) return;
 
-        // Only show Score/BPM while actively in the Compressions step -
-        // otherwise they overlap with InstructionText or the Summary screen.
-        bool showDuringThisStep = cprManager.currentState == CPRLogicManager.ScenarioState.Compressions;
+        bool showInCompressions = cprManager.currentState == CPRLogicManager.ScenarioState.Compressions;
 
         if (scoreText != null)
         {
-            scoreText.gameObject.SetActive(showDuringThisStep);
-            if (showDuringThisStep)
-                scoreText.text = $"Score: {cprManager.score:F1}";
+            scoreText.gameObject.SetActive(showInCompressions);
+            if (showInCompressions) scoreText.text = $"Score: {cprManager.score:F1}";
         }
 
         if (bpmText != null)
         {
-            bpmText.gameObject.SetActive(showDuringThisStep);
-            if (showDuringThisStep)
-                bpmText.text = $"BPM: {cprManager.CurrentBpm:F0}";
+            bpmText.gameObject.SetActive(showInCompressions);
+            if (showInCompressions) bpmText.text = $"BPM: {cprManager.CurrentBpm:F0}";
+        }
+
+        // Live Timer (MM:SS)
+        if (timerText != null)
+        {
+            timerText.gameObject.SetActive(showInCompressions);
+            if (showInCompressions)
+            {
+                int minutes = Mathf.FloorToInt(cprManager.TimeRemaining / 60f);
+                int seconds = Mathf.FloorToInt(cprManager.TimeRemaining % 60f);
+                timerText.text = $"Time: {minutes:00}:{seconds:00}";
+            }
+        }
+
+        // Live CCF %
+        if (ccfText != null)
+        {
+            ccfText.gameObject.SetActive(showInCompressions);
+            if (showInCompressions)
+            {
+                ccfText.text = $"CCF: {cprManager.CurrentCCF:F0}%";
+            }
         }
     }
 

@@ -2,11 +2,9 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// CPR Logic, Signal Processing & Scoring
-/// Handles: peak/recoil compression detection, rate (BPM) + pause detection,
-/// scenario state machine, and score calculation.
-/// Fully self-contained: works with real sensor data OR simulated mock data,
-/// so it can be tested/demoed without any ESP32 / pressure sensor hardware.
+/// CPR Logic, International Metrics & Assessment Engine
+/// Tracks: Peak/Recoil, BPM, 2-Minute Cycle Timer, CCF (Chest Compression Fraction),
+/// Pause Penalties, and Percentage-based Performance Summary.
 /// </summary>
 public class CPRLogicManager : MonoBehaviour
 {
@@ -26,18 +24,31 @@ public class CPRLogicManager : MonoBehaviour
     public ScenarioState currentState = ScenarioState.FindScene;
 
     // ---------------------------------------------------------------
+    // 2-MINUTE CYCLE & CCF (International Standard)
+    // ---------------------------------------------------------------
+    [Header("CPR Cycle & CCF Standards")]
+    [Tooltip("Standard CPR cycle duration in seconds (Default 120s = 2 minutes).")]
+    public float cprCycleDuration = 120f;
+    public float TimeRemaining { get; private set; } = 120f;
+    public float TotalSessionTime { get; private set; } = 0f;
+    public float ActiveCompressionTime { get; private set; } = 0f;
+
+    // CCF: Chest Compression Fraction (% of time compressions are actively performed)
+    public float CurrentCCF => (TotalSessionTime > 0.1f) 
+        ? Mathf.Clamp((ActiveCompressionTime / TotalSessionTime) * 100f, 0f, 100f) 
+        : 0f;
+
+    // ---------------------------------------------------------------
     // COMPRESSION DETECTION (Peak & Recoil)
     // ---------------------------------------------------------------
     [Header("Compression Detection")]
-    [Tooltip("Sensor value below baseline that counts as a compression peak (depth threshold).")]
-    public float peakThreshold = 0.3f;
-    [Tooltip("How close to baseline the signal must return to count as 'full recoil'.")]
-    public float recoilThreshold = 0.05f;
+    public float peakThreshold = 0.35f;
+    public float recoilThreshold = 0.08f;
 
     private float baseline = 0f;
-    private bool isCompressing = false;   // currently going down toward a peak
-    private bool waitingForRecoil = false; // past peak, waiting for release
+    private bool waitingForRecoil = false;
     private float currentPeakDepth = 0f;
+    private float currentSampleDepth = 0f;
 
     // ---------------------------------------------------------------
     // RATE (BPM) & PAUSE DETECTION
@@ -45,9 +56,7 @@ public class CPRLogicManager : MonoBehaviour
     [Header("Rate & Pause")]
     public float targetBpmMin = 100f;
     public float targetBpmMax = 120f;
-    [Tooltip("Seconds of no compression before it counts as a 'pause'.")]
     public float pauseThresholdSeconds = 2f;
-    [Tooltip("Score penalty applied per detected pause.")]
     public float pausePenalty = 5f;
 
     private List<float> compressionTimestamps = new List<float>();
@@ -55,70 +64,120 @@ public class CPRLogicManager : MonoBehaviour
     public float CurrentBpm { get; private set; } = 0f;
 
     // ---------------------------------------------------------------
-    // SCORING
+    // SCORING & METRICS (Standard 5.0 - 6.0 cm)
     // ---------------------------------------------------------------
     [Header("Scoring")]
     public float score = 100f;
     private int totalCompressions = 0;
     private int goodDepthCompressions = 0;
     private int goodRateCompressions = 0;
+    private int fullRecoilCount = 0;
     private int pauseCount = 0;
 
-    // Depth is normalized (0-1 from sensor); adjust to your sensor's real range.
-    [Tooltip("Minimum normalized depth considered a 'good' compression.")]
-    public float goodDepthMin = 0.3f;
-    [Tooltip("Maximum normalized depth considered a 'good' compression (avoid too deep).")]
-    public float goodDepthMax = 0.6f;
+    public float goodDepthMin = 0.71f; // 5.0 cm / 7.0 cm
+    public float goodDepthMax = 0.86f; // 6.0 cm / 7.0 cm
 
     // ---------------------------------------------------------------
-    // EVENTS (hook these up to UI / feedback / animation later)
+    // EVENTS
     // ---------------------------------------------------------------
-    public System.Action<int> OnCompressionDetected;   // passes total compression count
-    public System.Action<float> OnPauseDetected;        // passes pause duration
-    public System.Action<float> OnScoreUpdated;          // passes current score
+    public System.Action<int> OnCompressionDetected;
+    public System.Action<float> OnPauseDetected;
+    public System.Action<float> OnScoreUpdated;
     public System.Action<ScenarioState> OnStateChanged;
 
     void Update()
     {
         if (currentState != ScenarioState.Compressions) return;
 
+        UpdateCycleTimers();
         CheckForPause();
     }
 
-    // =================================================================
-    // PUBLIC ENTRY POINT — call this every frame/sample with the latest
-    // pressure sensor reading (0 = baseline/no pressure, 1 = max pressure).
-    // Works identically whether the value comes from the real ESP32
-    // or from GenerateMockSample() below.
-    // =================================================================
+    private void UpdateCycleTimers()
+    {
+        TotalSessionTime += Time.deltaTime;
+        TimeRemaining = Mathf.Max(0f, cprCycleDuration - TotalSessionTime);
+
+        // If sensor is depressed beyond recoil threshold, count as active compression time
+        if (currentSampleDepth > recoilThreshold || waitingForRecoil)
+        {
+            ActiveCompressionTime += Time.deltaTime;
+        }
+
+        // Auto-advance to Summary when the 2-minute cycle completes
+        if (TimeRemaining <= 0f)
+        {
+            AdvanceState();
+        }
+    }
+
+    // ตัวแปรจำค่าต่ำสุดที่ผ่อนมือขึ้นมาระหว่างรอบ
+    private float minDepthDuringRecoil = 999f;
+
+    // สถานะย่อยของวงรอบการกด: พัก (Idle) -> กำลังกดลง (Pressing) -> กำลังผ่อนมือขึ้น (Releasing)
+    private enum CompressionCyclePhase { Idle, Pressing, Releasing }
+    private CompressionCyclePhase cyclePhase = CompressionCyclePhase.Idle;
+    private float lowestRecoilDepth = 999f;
+
     public void ProcessSensorSample(float normalizedPressure, float timestamp)
     {
         if (currentState != ScenarioState.Compressions) return;
 
+        currentSampleDepth = normalizedPressure;
         float delta = normalizedPressure - baseline;
 
-        if (!waitingForRecoil)
+        switch (cyclePhase)
         {
-            // Watching for a downward peak
-            if (delta >= peakThreshold)
-            {
-                waitingForRecoil = true;
-                currentPeakDepth = delta;
-            }
-        }
-        else
-        {
-            // Track deepest point of this compression
-            if (delta > currentPeakDepth)
-                currentPeakDepth = delta;
+            case CompressionCyclePhase.Idle:
+                // ตรวจจับเมื่อเริ่มออกแรงกดข้ามเกณฑ์
+                if (delta >= peakThreshold)
+                {
+                    cyclePhase = CompressionCyclePhase.Pressing;
+                    currentPeakDepth = delta;
+                }
+                break;
 
-            // Check for full recoil back to baseline
-            if (delta <= recoilThreshold)
-            {
-                RegisterCompression(currentPeakDepth, timestamp);
-                waitingForRecoil = false;
-                currentPeakDepth = 0f;
-            }
+            case CompressionCyclePhase.Pressing:
+                // ติดตามหาจุดกดที่ลึกที่สุด (Peak) ในรอบนั้น
+                if (delta > currentPeakDepth)
+                {
+                    currentPeakDepth = delta;
+                }
+                // เมื่อความลึกเริ่มลดลงจากจุดยอดเกิน 0.04 (เริ่มเข้าสู่ช่วงผ่อนมือ/คืนตัว)
+                else if (delta < currentPeakDepth - 0.04f)
+                {
+                    cyclePhase = CompressionCyclePhase.Releasing;
+                    lowestRecoilDepth = delta;
+                }
+                break;
+
+            case CompressionCyclePhase.Releasing:
+                // ติดตามหาจุดที่ผ่อนมือคืนตัวขึ้นมาได้ต่ำที่สุด
+                if (delta < lowestRecoilDepth)
+                {
+                    lowestRecoilDepth = delta;
+                }
+
+                // กรณีที่ 1: ปล่อยมือคืนตัวสุดตามเกณฑ์ (Full Recoil สมบูรณ์)
+                if (delta <= recoilThreshold)
+                {
+                    fullRecoilCount++;
+                    RegisterCompression(currentPeakDepth, timestamp);
+                    cyclePhase = CompressionCyclePhase.Idle;
+                    currentPeakDepth = 0f;
+                }
+                // กรณีที่ 2: กดแช่ / คืนตัวไม่สุด แล้วออกแรงกดซ้ำลงไปใหม่
+                // ตรวจจับเฉพาะเมื่ออยู่ในช่วงผ่อนมือ แล้วแรงกดเด้งกลับขึ้นมาเกิน 0.10 จากจุดต่ำสุด
+                else if (delta - lowestRecoilDepth > 0.10f && currentPeakDepth >= peakThreshold)
+                {
+                    // นับ 1 ครั้งทันทีโดยไม่ให้แต้ม fullRecoilCount
+                    RegisterCompression(currentPeakDepth, timestamp);
+                    
+                    // สลับเข้าสู่จังหวะกดลงรอบใหม่ต่อเนื่องทันที
+                    cyclePhase = CompressionCyclePhase.Pressing;
+                    currentPeakDepth = delta;
+                }
+                break;
         }
     }
 
@@ -128,7 +187,6 @@ public class CPRLogicManager : MonoBehaviour
         compressionTimestamps.Add(timestamp);
         lastCompressionTime = timestamp;
 
-        // Keep only the last few timestamps for a rolling BPM calc
         if (compressionTimestamps.Count > 6)
             compressionTimestamps.RemoveAt(0);
 
@@ -137,7 +195,7 @@ public class CPRLogicManager : MonoBehaviour
         bool goodDepth = depth >= goodDepthMin && depth <= goodDepthMax;
         if (goodDepth) goodDepthCompressions++;
 
-        bool goodRate = CurrentBpm >= targetBpmMin && CurrentBpm <= targetBpmMax;
+        bool goodRate = (totalCompressions == 1) || (CurrentBpm >= targetBpmMin && CurrentBpm <= targetBpmMax);
         if (goodRate) goodRateCompressions++;
 
         OnCompressionDetected?.Invoke(totalCompressions);
@@ -148,7 +206,7 @@ public class CPRLogicManager : MonoBehaviour
     {
         if (compressionTimestamps.Count < 2)
         {
-            CurrentBpm = 0f;
+            CurrentBpm = 110f;
             return;
         }
 
@@ -170,7 +228,6 @@ public class CPRLogicManager : MonoBehaviour
             OnPauseDetected?.Invoke(sinceLast);
             OnScoreUpdated?.Invoke(score);
 
-            // Reset so we don't penalize every single frame during the pause
             lastCompressionTime = Time.time;
         }
     }
@@ -181,17 +238,15 @@ public class CPRLogicManager : MonoBehaviour
 
         float depthRatio = (float)goodDepthCompressions / totalCompressions;
         float rateRatio = (float)goodRateCompressions / totalCompressions;
+        float recoilRatio = (float)fullRecoilCount / totalCompressions;
 
-        // High-Quality CPR weighting: depth 50%, rate 50%, minus pause penalties already applied
-        float qualityScore = ((depthRatio * 0.5f) + (rateRatio * 0.5f)) * 100f;
+        // AHA-aligned score weighting: Depth 40%, Rate 40%, Recoil 20%
+        float qualityScore = ((depthRatio * 0.4f) + (rateRatio * 0.4f) + (recoilRatio * 0.2f)) * 100f;
         score = Mathf.Clamp(qualityScore - (pauseCount * pausePenalty), 0f, 100f);
 
         OnScoreUpdated?.Invoke(score);
     }
 
-    // ---------------------------------------------------------------
-    // STATE MACHINE CONTROL
-    // ---------------------------------------------------------------
     public void AdvanceState()
     {
         if (currentState == ScenarioState.Summary) return;
@@ -208,23 +263,43 @@ public class CPRLogicManager : MonoBehaviour
         totalCompressions = 0;
         goodDepthCompressions = 0;
         goodRateCompressions = 0;
+        fullRecoilCount = 0;
         pauseCount = 0;
+        TotalSessionTime = 0f;
+        ActiveCompressionTime = 0f;
+        TimeRemaining = cprCycleDuration;
         compressionTimestamps.Clear();
         lastCompressionTime = -999f;
         CurrentBpm = 0f;
         score = 100f;
-        waitingForRecoil = false;
         currentPeakDepth = 0f;
+        currentSampleDepth = 0f;
+
+        // รีเซ็ตสถานะวงรอบการกด
+        cyclePhase = CompressionCyclePhase.Idle;
+        lowestRecoilDepth = 999f;
+
+        OnScoreUpdated?.Invoke(score);
     }
 
     public ScoreSummary GetSummary()
     {
+        float depthPct = totalCompressions > 0 ? ((float)goodDepthCompressions / totalCompressions) * 100f : 0f;
+        float ratePct = totalCompressions > 0 ? ((float)goodRateCompressions / totalCompressions) * 100f : 0f;
+        float recoilPct = totalCompressions > 0 ? ((float)fullRecoilCount / totalCompressions) * 100f : 0f;
+
         return new ScoreSummary
         {
             totalCompressions = totalCompressions,
             goodDepthCompressions = goodDepthCompressions,
             goodRateCompressions = goodRateCompressions,
+            fullRecoilCount = fullRecoilCount,
             pauseCount = pauseCount,
+            depthPercentage = depthPct,
+            ratePercentage = ratePct,
+            recoilPercentage = recoilPct,
+            ccfPercentage = CurrentCCF,
+            totalTimeSeconds = TotalSessionTime,
             finalScore = score
         };
     }
@@ -235,42 +310,33 @@ public class CPRLogicManager : MonoBehaviour
         public int totalCompressions;
         public int goodDepthCompressions;
         public int goodRateCompressions;
+        public int fullRecoilCount;
         public int pauseCount;
+        public float depthPercentage;
+        public float ratePercentage;
+        public float recoilPercentage;
+        public float ccfPercentage;
+        public float totalTimeSeconds;
         public float finalScore;
     }
 
-    // =================================================================
-    // MOCK DATA TESTING — no ESP32/sensor needed.
-    // Attach this component in an empty test scene, enable useMockData,
-    // press Play, and it will feed itself simulated compression cycles.
-    // =================================================================
+    // ---------------------------------------------------------------
+    // MOCK DATA TESTING
+    // ---------------------------------------------------------------
     [Header("Mock Data Testing")]
     public bool useMockData = false;
-    [Tooltip("Simulated compressions per minute for the mock signal.")]
     public float mockTargetBpm = 110f;
-    [Range(0f, 1f)] public float mockPeakDepth = 0.45f;
+    [Range(0f, 1f)] public float mockPeakDepth = 0.785f; // 5.5 cm / 7.0 cm
 
     private float mockCycleTimer = 0f;
     private float mockCycleDuration => 60f / Mathf.Max(1f, mockTargetBpm);
-
-    void Start()
-    {
-        // NOTE: Mock data only ever samples while currentState == Compressions
-        // (see LateUpdate below), so we no longer force the state here.
-        // This lets an external controller (e.g. CPRScenarioController) own
-        // the FindScene -> CheckBreathing -> Call1669 -> Compressions -> Summary
-        // progression. Stats still reset whenever Compressions state begins
-        // (see AdvanceState()).
-    }
 
     void LateUpdate()
     {
         if (!useMockData || currentState != ScenarioState.Compressions) return;
 
         mockCycleTimer += Time.deltaTime;
-        float phase = (mockCycleTimer % mockCycleDuration) / mockCycleDuration; // 0..1 within one compression cycle
-
-        // Simple sine-based down/up motion: 0 = baseline, peak mid-cycle, back to 0
+        float phase = (mockCycleTimer % mockCycleDuration) / mockCycleDuration;
         float simulatedValue = Mathf.Sin(phase * Mathf.PI) * mockPeakDepth;
         ProcessSensorSample(simulatedValue, Time.time);
     }

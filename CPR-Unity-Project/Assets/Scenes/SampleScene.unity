@@ -1196,6 +1196,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: Joe_CPR_Ready
       objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: e836e5fd4e2b46848a08d5dd72862e9b, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 5707504244791818602, guid: e836e5fd4e2b46848a08d5dd72862e9b, type: 3}
       propertyPath: 'm_BlendShapeWeights.Array.data[0]'
       value: 0
@@ -2099,7 +2103,7 @@ MonoBehaviour:
   simulationMode: 0
   targetIp: 127.0.0.1
   targetPort: 8055
-  isSending: 1
+  isSending: 0
 --- !u!114 &1000533224
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -12,15 +12,21 @@ public class CPRScenarioController : MonoBehaviour
     public Button nextButton;
     public TextMeshProUGUI nextButtonLabel;
 
+    [Header("Scenario Illustration UI")]
+    public Image scenarioImage;             // ลาก GameObject Image มาใส่
+    public Sprite findSceneSprite;           // รูปที่ 1: มาถึงที่เกิดเหตุ
+    public Sprite checkBreathingSprite;      // รูปที่ 2: ตรวจการตอบสนอง
+    public Sprite call1669Sprite;            // รูปที่ 3: โทร 1669
+
     [Header("Summary UI")]
     public GameObject summaryPanel;
     public TextMeshProUGUI summaryText;
 
     [Header("Assessment Info Modal (i)")]
-    public Button infoButton;             // ปุ่มตัว (i)
-    public GameObject infoModalPanel;     // หน้าต่าง Popup อธิบาย
-    public Button closeInfoButton;        // ปุ่มปิด Popup
-    public TextMeshProUGUI infoText;      // กล่องข้อความอธิบายสูตร
+    public Button infoButton;
+    public GameObject infoModalPanel;
+    public Button closeInfoButton;
+    public TextMeshProUGUI infoText;
 
     void Start()
     {
@@ -36,7 +42,6 @@ public class CPRScenarioController : MonoBehaviour
         if (nextButton != null)
             nextButton.onClick.AddListener(OnNextPressed);
 
-        // ตั้งค่าปุ่ม Info (i) และปุ่มปิด
         if (infoButton != null)
             infoButton.onClick.AddListener(OpenInfoModal);
 
@@ -96,11 +101,44 @@ public class CPRScenarioController : MonoBehaviour
         if (nextButtonLabel != null)
             nextButtonLabel.text = (state == CPRLogicManager.ScenarioState.Summary) ? "Restart" : "Next";
 
+        // ควบคุมการแสดงผลรูปภาพประกอบตามแต่ละ State
+        UpdateIllustration(state);
+
         if (state == CPRLogicManager.ScenarioState.Summary)
         {
             ShowSummary();
             if (infoModalPanel != null)
                 infoModalPanel.SetActive(false);
+        }
+    }
+
+    private void UpdateIllustration(CPRLogicManager.ScenarioState state)
+    {
+        if (scenarioImage == null) return;
+
+        switch (state)
+        {
+            case CPRLogicManager.ScenarioState.FindScene:
+                scenarioImage.gameObject.SetActive(true);
+                scenarioImage.sprite = findSceneSprite;
+                break;
+
+            case CPRLogicManager.ScenarioState.CheckBreathing:
+                scenarioImage.gameObject.SetActive(true);
+                scenarioImage.sprite = checkBreathingSprite;
+                break;
+
+            case CPRLogicManager.ScenarioState.Call1669:
+                scenarioImage.gameObject.SetActive(true);
+                scenarioImage.sprite = call1669Sprite;
+                break;
+
+            case CPRLogicManager.ScenarioState.Compressions:
+            case CPRLogicManager.ScenarioState.Summary:
+            default:
+                // เมื่อเข้าสู่โหมดกดหน้าอกจริง หรือหน้าสรุปผล ปิดรูปเพื่อแสดง Dashboard / Simulator
+                scenarioImage.gameObject.SetActive(false);
+                break;
         }
     }
 
@@ -143,9 +181,6 @@ public class CPRScenarioController : MonoBehaviour
             $"OVERALL SCORE: {summary.finalScore:F1} / 100";
     }
 
-    // ==========================================
-    // Info Modal Logic
-    // ==========================================
     public void OpenInfoModal()
     {
         if (infoModalPanel == null) return;

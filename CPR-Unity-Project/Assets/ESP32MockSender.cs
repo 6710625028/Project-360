@@ -179,4 +179,9 @@ public class ESP32MockSender : MonoBehaviour
             senderClient = null;
         }
     }
+    // เพิ่มฟังก์ชันนี้ไว้ใน ESP32MockSender.cs
+    public void ToggleMockESP32()
+    {
+        isSending = !isSending;
+    }
 }

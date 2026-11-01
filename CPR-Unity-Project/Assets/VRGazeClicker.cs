@@ -9,7 +9,7 @@ public class VRGazeClicker : MonoBehaviour
     public float dwellTime = 1.0f;
 
     [Header("Reticle Feedback")]
-    public Renderer reticleRenderer; // ลาก GazeReticle มาใส่ (ถ้าไม่ใส่จะค้นหาให้เอง)
+    public Renderer reticleRenderer;
     public Color normalColor = Color.white;
     public Color focusColor = Color.green;
 

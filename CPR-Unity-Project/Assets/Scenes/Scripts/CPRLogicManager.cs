@@ -77,6 +77,7 @@ public class CPRLogicManager : MonoBehaviour
     public float goodDepthMin = 0.71f; // 5.0 cm / 7.0 cm
     public float goodDepthMax = 0.86f; // 6.0 cm / 7.0 cm
 
+
     // ---------------------------------------------------------------
     // EVENTS
     // ---------------------------------------------------------------
@@ -121,7 +122,7 @@ public class CPRLogicManager : MonoBehaviour
 
     public void ProcessSensorSample(float normalizedPressure, float timestamp)
     {
-        if (currentState != ScenarioState.Compressions) return;
+        //if (currentState != ScenarioState.Compressions) return;
 
         currentSampleDepth = normalizedPressure;
         float delta = normalizedPressure - baseline;
@@ -216,6 +217,8 @@ public class CPRLogicManager : MonoBehaviour
 
         float avgIntervalSeconds = span / intervals;
         CurrentBpm = 60f / avgIntervalSeconds;
+
+       
     }
 
     private void CheckForPause()
@@ -319,7 +322,7 @@ public class CPRLogicManager : MonoBehaviour
         public float totalTimeSeconds;
         public float finalScore;
     }
-
+/*
     // ---------------------------------------------------------------
     // MOCK DATA TESTING
     // ---------------------------------------------------------------
@@ -340,4 +343,6 @@ public class CPRLogicManager : MonoBehaviour
         float simulatedValue = Mathf.Sin(phase * Mathf.PI) * mockPeakDepth;
         ProcessSensorSample(simulatedValue, Time.time);
     }
+    */
+
 }

@@ -76,7 +76,7 @@ public class CPRSensorSimulator : MonoBehaviour
         cprManager.goodDepthMax = 6.0f / maxDepthCm; // ~0.857
         cprManager.peakThreshold = 0.35f;
         cprManager.recoilThreshold = 0.08f;
-        cprManager.useMockData = false;
+        //cprManager.useMockData = false;
     }
 
     // ==========================================
@@ -219,7 +219,7 @@ public class CPRSensorSimulator : MonoBehaviour
             StopCoroutine(samplingCoroutine);
 
         if (cprManager != null)
-            cprManager.useMockData = false;
+            //cprManager.useMockData = false;
 
         if (depthSlider != null)
         {
